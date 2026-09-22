@@ -1,9 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from models import Part, Sheet
-from packing import pack_parts
-from importers import parse_excel, parse_csv, create_excel_template, HAS_OPENPYXL
-from exporters import build_print_html, export_to_txt, export_to_excel
+from utils.models import Part, Sheet
+from utils.packing import pack_parts
+from utils.importers import parse_excel, parse_csv, create_excel_template, HAS_OPENPYXL
+from utils.exporters import build_print_html, export_to_txt, export_to_excel
 from gui.viewer import SheetViewer
 from gui.manual_editor import ManualSheetEditor
 from utils.constants import COLORS
@@ -33,17 +33,30 @@ class App(tk.Tk):
         self._build_ui()
 
     def _build_ui(self):
+        # Главная раскладка:
+        #   строка 0 — статус-бар (фиксированная высота, на всю ширину)
+        #   строка 1 — контент (левая панель + правая панель)
+        #   столбец 0 — левая панель (фиксированный)
+        #   столбец 1 — правая панель (растягивается)
+        self.grid_rowconfigure(0, weight=0)  # статус-бар — фикс
+        self.grid_rowconfigure(1, weight=1)  # контент — растягивается
+        self.grid_columnconfigure(0, weight=0)  # левая — фикс
+        self.grid_columnconfigure(1, weight=1)  # правая — растягивается
+
+        # ============ ЛЕВАЯ ПАНЕЛЬ (управление) ============
         left = ttk.Frame(self, padding=10)
-        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.grid(row=1, column=0, sticky="ns")
 
         ttk.Label(left, text="Размер листа (мм)").pack(anchor=tk.W)
-        row = ttk.Frame(left); row.pack(fill=tk.X, pady=2)
+        row = ttk.Frame(left);
+        row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Ш:").pack(side=tk.LEFT)
         ttk.Entry(row, textvariable=self.sheet_w, width=6).pack(side=tk.LEFT)
         ttk.Label(row, text=" В:").pack(side=tk.LEFT)
         ttk.Entry(row, textvariable=self.sheet_h, width=6).pack(side=tk.LEFT)
 
-        row = ttk.Frame(left); row.pack(fill=tk.X, pady=2)
+        row = ttk.Frame(left);
+        row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Толщина пила (мм):").pack(side=tk.LEFT)
         ttk.Entry(row, textvariable=self.kerf, width=5).pack(side=tk.LEFT)
 
@@ -53,7 +66,6 @@ class App(tk.Tk):
                         variable=self.allow_rotation).pack(anchor=tk.W)
         ttk.Checkbutton(opts, text="Multi-start (поиск лучшего варианта)",
                         variable=self.multi_start).pack(anchor=tk.W)
-
 
         ttk.Separator(left, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
 
@@ -85,7 +97,8 @@ class App(tk.Tk):
 
         add = ttk.LabelFrame(left, text="Добавить деталь", padding=5)
         add.pack(fill=tk.X, pady=4)
-        r = ttk.Frame(add); r.pack(fill=tk.X)
+        r = ttk.Frame(add);
+        r.pack(fill=tk.X)
         ttk.Label(r, text="Название:").grid(row=0, column=0, sticky=tk.W)
         self.e_name = ttk.Entry(r, width=10)
         self.e_name.grid(row=0, column=1)
@@ -101,7 +114,8 @@ class App(tk.Tk):
         self.e_qty.grid(row=3, column=1)
         ttk.Button(add, text="Добавить", command=self.add_part).pack(pady=4)
 
-        btn_row = ttk.Frame(left); btn_row.pack(fill=tk.X, pady=4)
+        btn_row = ttk.Frame(left);
+        btn_row.pack(fill=tk.X, pady=4)
         ttk.Button(btn_row, text="Удалить",
                    command=self.del_part).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Очистить",
@@ -120,19 +134,18 @@ class App(tk.Tk):
         ttk.Button(left, text="🖨️ Печать всех листов",
                    command=self.print_all_sheets).pack(fill=tk.X, pady=2)
 
-        right = ttk.Frame(self)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        # ============ ПРАВАЯ ПАНЕЛЬ (Canvas) ============
+        right = tk.Frame(self, bg="white")
+        right.grid(row=1, column=1, sticky="nsew")
 
-        # Вертикальный скроллбар
         v_scroll = ttk.Scrollbar(right, orient=tk.VERTICAL)
         v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Горизонтальный скроллбар
         h_scroll = ttk.Scrollbar(right, orient=tk.HORIZONTAL)
         h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.canvas = tk.Canvas(
-            right, bg="white",
+            right, bg="white", highlightthickness=0,
             yscrollcommand=v_scroll.set,
             xscrollcommand=h_scroll.set,
         )
@@ -145,9 +158,11 @@ class App(tk.Tk):
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind_all("<Shift-MouseWheel>", self._on_shift_mousewheel)
 
+        # ============ СТАТУС-БАР (сверху) ============
         self.status = ttk.Label(self, text="Готово",
-                                relief=tk.SUNKEN, anchor=tk.W)
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
+                                relief=tk.SUNKEN, anchor=tk.W,
+                                padding=(5, 3))
+        self.status.grid(row=0, column=0, columnspan=2, sticky="ew")
 
     def _on_mousewheel(self, event):
         # Обычная прокрутка — вертикальная
@@ -311,7 +326,7 @@ class App(tk.Tk):
             messagebox.showinfo("Инфо", "Добавь хотя бы одну деталь")
             return
         self.status.config(text="Расчёт...")
-        self.update()
+        self.update_idletasks()
         try:
             self.sheets = pack_parts(
                 self.parts,
@@ -329,7 +344,7 @@ class App(tk.Tk):
             messagebox.showerror("Ошибка", "Не удалось разложить детали")
             self.status.config(text="Ошибка")
             return
-        self.draw()
+        # self.draw()
         total_parts = sum(len(s.placed) for s in self.sheets)
         avg_fill = sum(s.fill_percent for s in self.sheets) / len(self.sheets)
         self.status.config(
@@ -338,12 +353,20 @@ class App(tk.Tk):
                  f"Среднее заполнение: {avg_fill:.1f}%"
         )
 
+        self.draw()
+
     # ---------- Визуализация ----------
 
     def draw(self):
         self.canvas.delete("all")
         if not self.sheets:
             return
+
+        # Заливаем Canvas белым — убирает серые полосы вокруг листов
+        cw_view = self.canvas.winfo_width() or 1000
+        ch_view = self.canvas.winfo_height() or 800
+        self.canvas.create_rectangle(0, 0, cw_view, ch_view,
+                                     fill="white", outline="")
 
         pad = 20
         cw = self.canvas.winfo_width() or 1000

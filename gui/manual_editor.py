@@ -1,8 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import List, Optional
-from models import Part, Sheet, PlacedPart, FreeRect, ManualPart
-from packing import pack_parts
+from utils.models import Part, Sheet, PlacedPart, FreeRect, ManualPart
+from utils.packing import pack_parts
 
 ###
 # ============================================================
@@ -563,7 +563,7 @@ class ManualSheetEditor(tk.Toplevel):
 
 
 
-    def _on_canvas_release(self, event):
+    def _on_canvas_release(self, _event):
         """Отпустили мышку — деталь остаётся там, где её отпустили.
         Если позиция невалидна — она подсветится красным, и её можно
         будет перетащить в другое место."""
@@ -770,8 +770,8 @@ class ManualSheetEditor(tk.Toplevel):
             free = new_free
 
         # Убираем нулевые и слишком мелкие (< 100×100 мм)
-        MIN = 100
-        free = [r for r in free if r.w >= MIN and r.h >= MIN]
+        min_size = 100
+        free = [r for r in free if r.w >= min_size and r.h >= min_size]
         return free
 
 
@@ -902,7 +902,6 @@ class ManualSheetEditor(tk.Toplevel):
         pw = x1 - x0
         ph = y1 - y0
         min_side = min(pw, ph)
-        max_side = max(pw, ph)
 
         # Подбираем шрифт
         if min_side > 60:
@@ -920,8 +919,6 @@ class ManualSheetEditor(tk.Toplevel):
         cy = (y0 + y1) / 2
 
         # --- Определяем, что поместится ---
-        # "Большая" деталь — по обеим сторонам не меньше 30 px
-        is_big = pw >= 40 and ph >= 30
         # "Средняя" — влезет хотя бы размер + имя
         is_medium = pw >= 25 and ph >= 18
         # "Крошка" — рисуем только размер, если влезает хотя бы одна

@@ -1,5 +1,5 @@
 import random
-from models import Part, PlacedPart, Sheet, FreeRect
+from utils.models import PlacedPart, Sheet, FreeRect
 
 
 # ============================================================

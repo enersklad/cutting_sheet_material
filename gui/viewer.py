@@ -1,8 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from models import Sheet, PlacedPart
-from utils.constants import COLORS
-from typing import List
+
 
 class SheetViewer(tk.Toplevel):
     """Окно крупного просмотра одного листа раскроя."""

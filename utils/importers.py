@@ -1,11 +1,12 @@
 import csv
-from models import Part
+from utils.models import Part
 from utils.constants import ALIASES
 
 try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
+    openpyxl = None
     HAS_OPENPYXL = False
 
 
@@ -98,7 +99,7 @@ def detect_encoding(path):
         if enc:
             return enc
     except ImportError:
-        pass
+        chardet = None
     for enc in ("utf-8-sig", "utf-8", "cp1251", "cp866", "koi8-r"):
         try:
             with open(path, "r", encoding=enc) as f:
