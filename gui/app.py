@@ -2,7 +2,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from utils.models import Part, Sheet
 from utils.packing import pack_parts
-from utils.importers import parse_excel, parse_csv, create_excel_template, HAS_OPENPYXL
+from utils.importers import (
+    parse_excel, parse_excel_map, parse_csv,
+    create_excel_template, HAS_OPENPYXL,
+)
 from utils.exporters import build_print_html, export_to_txt, export_to_excel
 from gui.viewer import SheetViewer
 from gui.manual_editor import ManualSheetEditor
@@ -97,22 +100,41 @@ class App(tk.Tk):
 
         add = ttk.LabelFrame(left, text="Добавить деталь", padding=5)
         add.pack(fill=tk.X, pady=4)
+
+        # Все поля — в одну строку
         r = ttk.Frame(add);
         r.pack(fill=tk.X)
-        ttk.Label(r, text="Название:").grid(row=0, column=0, sticky=tk.W)
-        self.e_name = ttk.Entry(r, width=10)
-        self.e_name.grid(row=0, column=1)
-        ttk.Label(r, text="Ш:").grid(row=1, column=0, sticky=tk.W)
-        self.e_w = ttk.Entry(r, width=10)
-        self.e_w.grid(row=1, column=1)
-        ttk.Label(r, text="В:").grid(row=2, column=0, sticky=tk.W)
-        self.e_h = ttk.Entry(r, width=10)
-        self.e_h.grid(row=2, column=1)
-        ttk.Label(r, text="Кол-во:").grid(row=3, column=0, sticky=tk.W)
-        self.e_qty = ttk.Entry(r, width=10)
+
+        # Название — самое широкое поле
+        self.e_name = tk.Entry(r, width=14, fg="gray")
+        self.e_name.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+        self._add_placeholder(self.e_name, "Название")
+
+        # Ширина
+        self.e_w = tk.Entry(r, width=6, fg="gray")
+        self.e_w.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+        self._add_placeholder(self.e_w, "Ширина")
+
+        # Высота
+        self.e_h = tk.Entry(r, width=6, fg="gray")
+        self.e_h.grid(row=0, column=2, padx=2, pady=2, sticky="ew")
+        self._add_placeholder(self.e_h, "Высота")
+
+        # Количество — с предзаполнением "1"
+        self.e_qty = tk.Entry(r, width=5)
         self.e_qty.insert(0, "1")
-        self.e_qty.grid(row=3, column=1)
-        ttk.Button(add, text="Добавить", command=self.add_part).pack(pady=4)
+        self.e_qty.grid(row=0, column=3, padx=2, pady=2, sticky="ew")
+
+        # Кнопка «Добавить» — там же, справа
+        ttk.Button(r, text="Добавить", width=9,
+                   command=self.add_part).grid(row=0, column=4, padx=4, pady=2)
+
+        # Настраиваем растягивание: Название растягивается, остальные — фикс.
+        r.grid_columnconfigure(0, weight=1)  # Название
+        r.grid_columnconfigure(1, weight=0)  # Ширина
+        r.grid_columnconfigure(2, weight=0)  # Высота
+        r.grid_columnconfigure(3, weight=0)  # Кол-во
+        r.grid_columnconfigure(4, weight=0)  # Кнопка
 
         btn_row = ttk.Frame(left);
         btn_row.pack(fill=tk.X, pady=4)
@@ -164,6 +186,24 @@ class App(tk.Tk):
                                 padding=(5, 3))
         self.status.grid(row=0, column=0, columnspan=2, sticky="ew")
 
+    def _add_placeholder(self, entry, text):
+        """Добавляет placeholder в Entry: серый текст, исчезает при фокусе."""
+        entry.insert(0, text)
+        entry.config(fg="#999999")
+
+        def on_focus_in(event):
+            if entry.get() == text:
+                entry.delete(0, tk.END)
+                entry.config(fg="black")
+
+        def on_focus_out(event):
+            if entry.get() == "":
+                entry.insert(0, text)
+                entry.config(fg="gray")
+
+        entry.bind("<FocusIn>", on_focus_in)
+        entry.bind("<FocusOut>", on_focus_out)
+
     def _on_mousewheel(self, event):
         # Обычная прокрутка — вертикальная
         self.canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -177,22 +217,46 @@ class App(tk.Tk):
 
     def add_part(self):
         try:
-            name = self.e_name.get().strip() or f"Деталь{len(self.parts)+1}"
-            w = int(self.e_w.get())
-            h = int(self.e_h.get())
+            # Название — если placeholder остался, значит пользователь не ввёл
+            name_raw = self.e_name.get().strip()
+            if not name_raw or name_raw == "Название":
+                name = f"Деталь{len(self.parts)+1}"
+            else:
+                name = name_raw
+
+            # Ширина и высота — тоже с проверкой placeholder
+            w_raw = self.e_w.get().strip()
+            h_raw = self.e_h.get().strip()
+            if not w_raw or w_raw == "Ширина":
+                raise ValueError
+            if not h_raw or h_raw == "Высота":
+                raise ValueError
+
+            w = int(w_raw)
+            h = int(h_raw)
             qty = int(self.e_qty.get())
             if w <= 0 or h <= 0 or qty <= 0:
                 raise ValueError
         except ValueError:
             messagebox.showerror("Ошибка", "Проверь размеры и количество")
             return
+
         self.parts.append(Part(name, w, h, qty))
         self.refresh_tree()
+
+        # Очистка полей
         self.e_name.delete(0, tk.END)
         self.e_w.delete(0, tk.END)
         self.e_h.delete(0, tk.END)
         self.e_qty.delete(0, tk.END)
         self.e_qty.insert(0, "1")
+
+        # Возврат placeholder в пустые поля
+        self._add_placeholder(self.e_name, "Название")
+        self._add_placeholder(self.e_w, "Ширина")
+        self._add_placeholder(self.e_h, "Высота")
+
+        self.e_name.focus_set()
 
     def del_part(self):
         sel = self.tree.selection()
@@ -228,12 +292,77 @@ class App(tk.Tk):
         )
         if not path:
             return
+
+        # Сначала пробуем прочитать как КАРТУ РАСКРОЯ
+        # (если в файле есть колонки X и Y)
+        try:
+            sheets, map_errors = parse_excel_map(path)
+            self._apply_map_import(sheets, map_errors)
+            return
+        except ValueError as e:
+            # Не карта — не страшно, пойдём в обычный импорт
+            print(f"[DEBUG] parse_excel_map вернул ValueError: {e}")
+        except Exception as e:
+            # А вот это — реальная ошибка, её надо увидеть
+            import traceback
+            print("[DEBUG] parse_excel_map упал:")
+            traceback.print_exc()
+            messagebox.showerror("Ошибка чтения",
+                                 f"Не удалось прочитать:\n{e}")
+            return
+
+        # Импорт как список деталей
         try:
             parts, errors = parse_excel(path)
         except Exception as e:
-            messagebox.showerror("Ошибка чтения", f"Не удалось прочитать:\n{e}")
+            messagebox.showerror("Ошибка чтения",
+                                 f"Не удалось прочитать:\n{e}")
             return
         self._apply_import(parts, errors)
+
+    def _apply_map_import(self, sheets, errors):
+        """Применяет загруженную карту раскроя."""
+        # Проверим — точно ли есть размещённые детали
+        total = sum(len(s.placed) for s in sheets)
+        if total == 0:
+            messagebox.showwarning("Пусто", "В файле нет размещённых деталей")
+            return
+
+        # Подставим реальные размеры листа из полей окна
+        sheet_w = self.sheet_w.get()
+        sheet_h = self.sheet_h.get()
+        for sheet in sheets:
+            sheet.w = sheet_w
+            sheet.h = sheet_h
+
+        answer = messagebox.askyesno(
+            "Загружена карта раскроя",
+            f"В файле найдено размещённых деталей: {total}\n"
+            f"Листов: {len(sheets)}\n\n"
+            f"Загрузить как готовую карту?\n"
+            f"(Размер листа возьмётся из полей: {sheet_w}×{sheet_h})"
+        )
+        if not answer:
+            return
+
+        self.sheets = sheets
+        self.draw()
+
+        total_parts = sum(len(s.placed) for s in self.sheets)
+        avg_fill = sum(s.fill_percent for s in self.sheets) / len(self.sheets)
+        self.status.config(
+            text=f"Загружена карта | Листов: {len(self.sheets)} | "
+                 f"Деталей: {total_parts} | "
+                 f"Заполнение: {avg_fill:.1f}%"
+        )
+
+        msg = f"Загружена карта раскроя:\n" \
+              f"  Листов: {len(sheets)}\n" \
+              f"  Деталей: {total}"
+        if errors:
+            msg += f"\n\nПропущено строк: {len(errors)}"
+            msg += "\n" + "\n".join(errors[:5])
+        messagebox.showinfo("Импорт завершён", msg)
 
     def import_csv(self):
         path = filedialog.askopenfilename(

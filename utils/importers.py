@@ -1,6 +1,6 @@
 import csv
-from utils.models import Part
 from utils.constants import ALIASES
+from utils.models import Part, Sheet, PlacedPart
 
 try:
     import openpyxl
@@ -68,6 +68,109 @@ def parse_excel(path):
         name = str(name_val).strip() if name_val is not None else f"Деталь{i}"
         parts.append(Part(name, w, h, qty))
     return parts, errors
+
+def parse_excel_map(path):
+    """Читает Excel-файл с готовой картой раскроя.
+    Проходит по ВСЕМ вкладкам, ищет вкладки с колонками X и Y
+    (обычно это «Лист N») и собирает из них список Sheet.
+
+    Возвращает (list_of_sheets, errors)."""
+    wb = openpyxl.load_workbook(path, data_only=True)
+
+    # Ищем вкладки с колонками X и Y
+    # Считаем, что любая вкладка, где есть заголовки X и Y — это лист раскроя.
+    all_sheets = []
+    errors = []
+
+    found_any = False
+
+    for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            continue
+
+        # Ищем строку с заголовками
+        header_row = None
+        for i, row in enumerate(rows[:10]):
+            row_lower = [str(c).strip().lower() if c is not None else ""
+                         for c in row]
+            has_x = any("x" in cell for cell in row_lower)
+            has_y = any("y" in cell for cell in row_lower)
+            if has_x and has_y:
+                header_row = i
+                break
+
+        if header_row is None:
+            # Это не вкладка с картой — пропускаем
+            continue
+
+        # Нашли — сопоставляем колонки
+        header = [str(c).strip().lower() if c is not None else ""
+                  for c in rows[header_row]]
+
+        def col_contains(name_variants):
+            for j, h in enumerate(header):
+                for variant in name_variants:
+                    if variant in h:
+                        return j
+            return None
+
+        idx_name = col_contains(["название", "имя", "деталь",
+                                  "наименование", "name"])
+        idx_w = col_contains(["ширина", "width"])
+        idx_h = col_contains(["высота", "height"])
+        idx_x = col_contains(["x"])
+        idx_y = col_contains(["y"])
+        idx_rot = col_contains(["повёрнута", "повернута", "rotated"])
+
+        if None in (idx_w, idx_h, idx_x, idx_y):
+            # Что-то не так с колонками — пропускаем вкладку
+            errors.append(f"Вкладка «{ws.title}»: не все колонки найдены "
+                          f"(нужны Ширина, Высота, X, Y)")
+            continue
+
+        sheet = Sheet(w=0, h=0)  # размеры заполним в вызывающем коде
+
+        for i, row in enumerate(rows[header_row + 1:],
+                                start=header_row + 2):
+            if not row or all(c is None or str(c).strip() == ""
+                              for c in row):
+                continue
+
+            def get(idx, default=None):
+                if idx is None or idx >= len(row):
+                    return default
+                return row[idx]
+
+            name = str(get(idx_name, f"Деталь{i}")).strip()
+            try:
+                w = int(float(get(idx_w)))
+                h = int(float(get(idx_h)))
+                x = int(float(get(idx_x)))
+                y = int(float(get(idx_y)))
+                rotated = False
+                if idx_rot is not None:
+                    rot_val = str(get(idx_rot, "")).strip().lower()
+                    rotated = rot_val in ("да", "yes", "true", "1", "y")
+            except (ValueError, TypeError):
+            # Пропускаем итоговые строки типа "Заполнение: XX%"
+            # и любые другие строки без реальных данных
+            # Не пишем в errors — просто молча идём дальше
+                continue
+
+            sheet.placed.append(PlacedPart(
+                name=name, x=x, y=y, w=w, h=h, rotated=rotated
+            ))
+
+        if sheet.placed:
+            all_sheets.append(sheet)
+            found_any = True
+
+    if not found_any:
+        raise ValueError("В файле не найдено ни одной вкладки с картой "
+                         "раскроя (нет колонок X и Y)")
+
+    return all_sheets, errors
 
 
 def create_excel_template(path):
