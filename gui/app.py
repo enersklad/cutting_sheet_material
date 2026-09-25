@@ -32,6 +32,8 @@ class App(tk.Tk):
         self.kerf = tk.IntVar(value=4)
         self.allow_rotation = tk.BooleanVar(value=True)
         self.multi_start = tk.BooleanVar(value=True)
+        # Масштаб макетов (множитель к автоподбору)
+        self.zoom = tk.DoubleVar(value=1.0)
 
         self._build_ui()
 
@@ -156,6 +158,67 @@ class App(tk.Tk):
         ttk.Button(left, text="🖨️ Печать всех листов",
                    command=self.print_all_sheets).pack(fill=tk.X, pady=2)
 
+        # === Ползунок масштаба ===
+        zoom_frame = ttk.LabelFrame(left, text="Масштаб макетов", padding=5)
+        zoom_frame.pack(fill=tk.X, pady=(10, 4))
+
+        zoom_row = ttk.Frame(zoom_frame)
+        zoom_row.pack(fill=tk.X)
+
+        ttk.Label(zoom_row, text="Мелко", font=("Arial", 8)).pack(side=tk.LEFT)
+
+        self.zoom_scale = ttk.Scale(
+            zoom_row,
+            from_=0.5, to=3.0,
+            orient=tk.HORIZONTAL,
+            variable=self.zoom,
+            command=self._on_zoom_change,
+        )
+        self.zoom_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+
+        ttk.Label(zoom_row, text="Крупно", font=("Arial", 8)).pack(side=tk.LEFT)
+
+        zoom_row2 = ttk.Frame(zoom_frame)
+        zoom_row2.pack(fill=tk.X, pady=(4, 0))
+
+        self.lbl_zoom = ttk.Label(zoom_row2, text="x1.00",
+                                  font=("Arial", 9))
+        self.lbl_zoom.pack(side=tk.LEFT)
+
+        ttk.Button(zoom_row2, text="Сброс",
+                   command=self._reset_zoom).pack(side=tk.RIGHT)
+
+        # === Ползунок масштаба ===
+        zoom_frame = ttk.LabelFrame(left, text="Масштаб макетов", padding=5)
+        zoom_frame.pack(fill=tk.X, pady=(10, 4))
+
+        zoom_row = ttk.Frame(zoom_frame)
+        zoom_row.pack(fill=tk.X)
+
+        ttk.Label(zoom_row, text="Мелко", font=("Arial", 8)).pack(side=tk.LEFT)
+
+        self.zoom_scale = ttk.Scale(
+            zoom_row,
+            from_=0.5, to=3.0,
+            orient=tk.HORIZONTAL,
+            variable=self.zoom,
+            command=self._on_zoom_change,
+        )
+        self.zoom_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+
+        ttk.Label(zoom_row, text="Крупно", font=("Arial", 8)).pack(side=tk.LEFT)
+
+        # Вторая строка: значение и кнопка сброса
+        zoom_row2 = ttk.Frame(zoom_frame)
+        zoom_row2.pack(fill=tk.X, pady=(4, 0))
+
+        self.lbl_zoom = ttk.Label(zoom_row2, text="x1.00",
+                                  font=("Arial", 9))
+        self.lbl_zoom.pack(side=tk.LEFT)
+
+        ttk.Button(zoom_row2, text="Сброс",
+                   command=self._reset_zoom).pack(side=tk.RIGHT)
+
         # ============ ПРАВАЯ ПАНЕЛЬ (Canvas) ============
         right = tk.Frame(self, bg="white")
         right.grid(row=1, column=1, sticky="nsew")
@@ -172,6 +235,7 @@ class App(tk.Tk):
             xscrollcommand=h_scroll.set,
         )
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
 
         v_scroll.config(command=self.canvas.yview)
         h_scroll.config(command=self.canvas.xview)
@@ -491,19 +555,78 @@ class App(tk.Tk):
         if not self.sheets:
             return
 
-        # Заливаем Canvas белым — убирает серые полосы вокруг листов
-        cw_view = self.canvas.winfo_width() or 1000
-        ch_view = self.canvas.winfo_height() or 800
+        # Заливаем Canvas белым — чтобы не было серых полос
+        cw_view = max(self.canvas.winfo_width(), 1000)
+        ch_view = max(self.canvas.winfo_height(), 800)
         self.canvas.create_rectangle(0, 0, cw_view, ch_view,
                                      fill="white", outline="")
 
         pad = 20
+
+        # Определяем, сколько листов влезает в один ряд по ширине
         cw = self.canvas.winfo_width() or 1000
-        cell_w = self.sheet_w.get() / 10
-        cell_h = self.sheet_h.get() / 10
-        cols = max(1, int((cw - pad) // (cell_w + pad)))
+        sheet_w_mm = self.sheet_w.get()
+        sheet_h_mm = self.sheet_h.get()
 
+        # Пробуем разные варианты: 1, 2, 3, 4... колонки,
+        # пока листы не станут слишком маленькими или не влезут по высоте.
+        # Оптимальный масштаб — такой, чтобы:
+        #   1. В ширину влезало целое число колонок
+        #   2. Высота листа + отступы не выходила за пределы Canvas
 
+        best_scale = None
+        best_cols = 1
+
+        # Пробуем ВСЕ варианты — от многих колонок к одной.
+        # Хотим найти такое cols, при котором масштаб максимальный
+        # И при этом листы влезают по высоте.
+        # Начинаем с минимума колонок (=> максимальный масштаб),
+        # увеличиваем пока не влезет по высоте.
+        best_scale = None
+        best_cols = 1
+
+        for cols in range(1, 8):
+            cell_w = (cw - pad * (cols + 1)) / cols
+            cell_h = cell_w * sheet_h_mm / sheet_w_mm
+            scale = cell_w / sheet_w_mm * self.zoom.get()
+
+            # Реальные размеры листа с учётом масштаба
+            real_w = sheet_w_mm * scale
+            real_h = sheet_h_mm * scale
+
+            # Проверяем, влезает ли в Canvas
+            if real_h + pad * 2 + 30 > ch_view:
+                continue  # лист слишком высокий — пробуем больше колонок
+            if real_w + pad * 2 > cw:
+                continue  # лист слишком широкий — тоже больше колонок
+
+            # Нашли подходящий вариант — фиксируем
+            best_scale = scale
+            best_cols = cols
+            break
+
+        # Если ничего не влезло — ставим минимальный масштаб,
+        # чтобы все листы влезли в 1 колонку
+        if best_scale is None:
+            best_cols = 1
+            cell_w = (cw - pad * 2)
+            cell_h = cell_w * sheet_h_mm / sheet_w_mm
+            if cell_h + pad * 2 + 30 > ch_view:
+                # Всё равно не влезает — уменьшаем до высоты
+                scale = (ch_view - pad * 2 - 30) / sheet_h_mm
+                best_scale = scale
+            else:
+                best_scale = cell_w / sheet_w_mm
+
+        # Если ничего не подошло — берём компромиссный масштаб
+        if best_scale is None:
+            best_scale = min(cw / (sheet_w_mm * 2), 0.12)
+            best_cols = max(1, int(cw // (sheet_w_mm * best_scale + pad)))
+
+        scale = best_scale
+        cell_w = sheet_w_mm * scale
+        cell_h = sheet_h_mm * scale
+        cols = best_cols
 
         max_x = 0
         max_y = 0
@@ -512,34 +635,63 @@ class App(tk.Tk):
             row = i // cols
             col = i % cols
             ox = pad + col * (cell_w + pad)
-            oy = pad + row * (cell_h + pad + 40)
+            oy = pad + row * (cell_h + pad + 30)
 
             max_x = max(max_x, ox + cell_w + pad)
             max_y = max(max_y, oy + cell_h + pad)
 
+            # Рамка листа
             self.canvas.create_rectangle(ox, oy, ox + cell_w, oy + cell_h,
                                          outline="black", width=2)
+
+            # Заголовок
             self.canvas.create_text(
                 ox + 5, oy - 8,
-                text=f"Лист {i+1}  ({sheet.fill_percent:.1f}%)",
-                anchor=tk.W, font=("Arial", 9, "bold")
+                text=f"Лист {i + 1}  ({sheet.fill_percent:.1f}%)",
+                anchor=tk.W, font=("Arial", 10, "bold")
             )
 
+            # Детали
             for j, part in enumerate(sheet.placed):
-                px = ox + part.x / 10
-                py = oy + part.y / 10
-                pw = part.w / 10
-                ph = part.h / 10
+                px = ox + part.x * scale
+                py = oy + part.y * scale
+                pw = part.w * scale
+                ph = part.h * scale
                 color = COLORS[j % len(COLORS)]
                 self.canvas.create_rectangle(px, py, px + pw, py + ph,
                                              fill=color, outline="black")
-                if pw > 25 and ph > 15:
+
+                # Подпись — если деталь достаточно большая
+                if pw > 30 and ph > 18:
+                    font_size = 8 if min(pw, ph) > 40 else 6
                     label = f"{part.name}\n{part.w}×{part.h}"
                     self.canvas.create_text(px + pw / 2, py + ph / 2,
-                                            text=label, font=("Arial", 7),
+                                            text=label,
+                                            font=("Arial", font_size),
                                             justify=tk.CENTER)
 
         self.canvas.config(scrollregion=(0, 0, max_x, max_y))
+
+    def _on_canvas_resize(self, event=None):
+        """Перерисовка при изменении размера Canvas."""
+        if self.sheets:
+            self.draw()
+
+    def _on_zoom_change(self, value=None):
+        """Перерисовка при изменении ползунка масштаба."""
+        # Обновляем текст с текущим значением
+        try:
+            self.lbl_zoom.config(text=f"x{self.zoom.get():.2f}")
+        except Exception:
+            pass
+        # Перерисовываем, если есть что рисовать
+        if self.sheets:
+            self.draw()
+
+    def _reset_zoom(self):
+        """Сбросить масштаб на 1.0."""
+        self.zoom.set(1.0)
+        self._on_zoom_change()
 
 ###
     def open_viewer(self, start_index=0):
